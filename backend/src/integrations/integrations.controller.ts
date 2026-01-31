@@ -27,4 +27,9 @@ export class IntegrationsController {
     async triggerSync(@Body() body: { type?: 'full' | 'incremental' | 'manual'; dryRun?: boolean; force?: boolean }) {
         return this.integrationsService.triggerSync(body);
     }
+
+    @Post('sync/ha')
+    async syncFromHomeAssistant() {
+        return this.integrationsService.syncFromHomeAssistant();
+    }
 }

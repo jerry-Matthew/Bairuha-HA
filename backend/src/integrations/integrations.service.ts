@@ -9,6 +9,7 @@ import { IntegrationCatalog } from './entities/integration-catalog.entity';
 import { CatalogSyncHistory } from './entities/catalog-sync-history.entity';
 import { CatalogSyncChange } from './entities/catalog-sync-change.entity';
 import { ConfigEntry } from './entities/config-entry.entity';
+import { HARestClient } from '../home-assistant/ha-rest-client.service';
 
 export interface SyncResult {
     syncId: string;
@@ -40,6 +41,7 @@ export class IntegrationsService {
         @InjectRepository(ConfigEntry)
         private readonly configEntryRepository: Repository<ConfigEntry>,
         private readonly githubService: GithubService,
+        private readonly haRestClient: HARestClient,
     ) { }
 
     async getIntegrations(query?: string, limit: number = 50, offset: number = 0) {
@@ -454,6 +456,71 @@ export class IntegrationsService {
 
     async importCustomIntegration(entry: CatalogEntry) {
         return this.importIntegration(entry);
+    }
+
+    /**
+     * Sync integrations from Home Assistant (PRIMARY METHOD)
+     */
+    async syncFromHomeAssistant(): Promise<{
+        success: boolean;
+        message: string;
+        componentsCount?: number;
+        newCount?: number;
+    }> {
+        try {
+            // Check if HA is configured
+            if (!this.haRestClient.isConfigured()) {
+                return {
+                    success: false,
+                    message: 'Home Assistant is not configured. Set HA_BASE_URL and HA_ACCESS_TOKEN in .env'
+                };
+            }
+
+            // Fetch config from HA
+            const config = await this.haRestClient.getConfig();
+            const components = config.components || [];
+
+            this.logger.log(`Fetched ${components.length} components from Home Assistant`);
+
+            let newCount = 0;
+
+            // Import each component as an integration
+            for (const domain of components) {
+                const existing = await this.catalogRepository.findOne({ where: { domain } });
+
+                if (!existing) {
+                    // Create new entry
+                    await this.catalogRepository.save({
+                        domain,
+                        name: domain.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+                        description: `Home Assistant ${domain} integration`,
+                        icon: 'mdi:puzzle',
+                        supportsDevices: true,
+                        isCloud: false,
+                        syncStatus: 'synced',
+                        source: 'ha',
+                        brandImageUrl: `https://brands.home-assistant.io/${domain}/icon.png`,
+                    });
+                    newCount++;
+                } else if (existing.source !== 'ha') {
+                    // Update source if it was from GitHub
+                    await this.catalogRepository.update(domain, { source: 'ha', syncStatus: 'synced' });
+                }
+            }
+
+            return {
+                success: true,
+                message: `Synced ${components.length} components from Home Assistant`,
+                componentsCount: components.length,
+                newCount
+            };
+        } catch (error: any) {
+            this.logger.error(`Failed to sync from Home Assistant: ${error.message}`);
+            return {
+                success: false,
+                message: `Failed to sync: ${error.message}`
+            };
+        }
     }
 
     // Database helper methods

@@ -1,4 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import { Area } from '../../areas/entities/area.entity';
+import { EntityState } from './entity-state.entity';
 
 @Entity('devices')
 @Index(['integrationId'])
@@ -24,6 +26,13 @@ export class Device {
 
     @Column({ type: 'uuid', nullable: true, name: 'area_id' })
     areaId: string;
+
+    @ManyToOne(() => Area, { nullable: true })
+    @JoinColumn({ name: 'area_id' })
+    area: Area;
+
+    @OneToMany(() => EntityState, (entity) => entity.device)
+    entities: EntityState[];
 
     @Column({ type: 'text', nullable: true })
     status: string;

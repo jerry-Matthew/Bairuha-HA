@@ -21,6 +21,7 @@ import { GroupsModule } from './groups/groups.module';
 import { MediaModule } from './media/media.module';
 import { DevToolsModule } from './dev-tools/dev-tools.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { HomeAssistantModule } from './home-assistant/home-assistant.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 
@@ -63,6 +64,7 @@ import { join } from 'path';
     MediaModule,
     DevToolsModule,
     NotificationsModule,
+    HomeAssistantModule,
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'), // Points to backend/public
     }),

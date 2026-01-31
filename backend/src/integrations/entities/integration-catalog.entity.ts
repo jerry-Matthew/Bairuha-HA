@@ -52,6 +52,9 @@ export class IntegrationCatalog {
     @Column({ type: 'text', nullable: true, name: 'handler_class' })
     handlerClass?: string;
 
+    @Column({ type: 'text', default: 'ha' })
+    source: 'ha' | 'hacs' | 'manual';
+
     @CreateDateColumn({ type: 'timestamptz', default: () => 'now()', name: 'created_at' })
     createdAt: Date;
 

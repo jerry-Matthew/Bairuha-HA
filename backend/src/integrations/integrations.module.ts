@@ -10,10 +10,12 @@ import { IntegrationCatalog } from './entities/integration-catalog.entity';
 import { CatalogSyncHistory } from './entities/catalog-sync-history.entity';
 import { CatalogSyncChange } from './entities/catalog-sync-change.entity';
 import { ConfigEntry } from './entities/config-entry.entity';
+import { HomeAssistantModule } from '../home-assistant/home-assistant.module';
 
 @Module({
     imports: [
         DatabaseModule,
+        HomeAssistantModule,
         TypeOrmModule.forFeature([
             Integration,
             IntegrationCatalog,

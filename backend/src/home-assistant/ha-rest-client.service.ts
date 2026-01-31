@@ -141,4 +141,85 @@ export class HARestClient {
             );
         }
     }
+
+    /**
+     * Get Home Assistant configuration (includes components list)
+     */
+    async getConfig(): Promise<{
+        components: string[];
+        version: string;
+        location_name: string;
+        [key: string]: any;
+    }> {
+        if (!this.isConfigured()) {
+            throw new HARestClientError(
+                'Home Assistant is not configured',
+                undefined,
+                false
+            );
+        }
+
+        const url = `${this.baseUrl}/api/config`;
+
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${this.accessToken}`,
+                },
+            });
+
+            if (!response.ok) {
+                throw new HARestClientError(
+                    `Failed to get config: ${response.status}`,
+                    response.status,
+                    response.status >= 500
+                );
+            }
+
+            const config = await response.json();
+            this.logger.log(`Fetched HA config: ${config.components?.length || 0} components`);
+            return config;
+        } catch (error) {
+            if (error instanceof HARestClientError) {
+                throw error;
+            }
+
+            throw new HARestClientError(
+                `Failed to get config: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                undefined,
+                true
+            );
+        }
+    }
+
+    /**
+     * Check if Home Assistant is reachable
+     */
+    async checkHealth(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+        if (!this.isConfigured()) {
+            return { status: 'error', message: 'HA_BASE_URL or HA_ACCESS_TOKEN not configured' };
+        }
+
+        try {
+            const url = `${this.baseUrl}/api/`;
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${this.accessToken}`,
+                },
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                return { status: 'ok', message: data.message || 'Connected' };
+            } else {
+                return { status: 'error', message: `HTTP ${response.status}` };
+            }
+        } catch (error) {
+            return {
+                status: 'error',
+                message: error instanceof Error ? error.message : 'Connection failed'
+            };
+        }
+    }
 }
+

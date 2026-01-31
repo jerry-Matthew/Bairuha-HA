@@ -1,0 +1,467 @@
+[
+  {
+    "domain": "accuweather",
+    "name": "AccuWeather",
+    "description": "Weather data from AccuWeather",
+    "icon": "mdi:weather-sunny",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "philips_hue",
+    "name": "Philips Hue",
+    "description": "Smart lighting system",
+    "icon": "mdi:lightbulb",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "zigbee",
+    "name": "Zigbee",
+    "description": "Zigbee devices via coordinator",
+    "icon": "mdi:zigbee",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "zwave",
+    "name": "Z-Wave",
+    "description": "Z-Wave devices via controller",
+    "icon": "mdi:zwave",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "wifi",
+    "name": "WiFi Devices",
+    "description": "WiFi-enabled smart devices",
+    "icon": "mdi:wifi",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "bluetooth",
+    "name": "Bluetooth",
+    "description": "Bluetooth Low Energy devices",
+    "icon": "mdi:bluetooth",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "sonoff",
+    "name": "Sonoff",
+    "description": "Sonoff smart home devices",
+    "icon": "mdi:power-socket-eu",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "tuya",
+    "name": "Tuya",
+    "description": "Tuya smart home platform",
+    "icon": "mdi:cloud",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "shelly",
+    "name": "Shelly",
+    "description": "Shelly smart home devices",
+    "icon": "mdi:lightning-bolt",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "tp_link",
+    "name": "TP-Link",
+    "description": "TP-Link Kasa smart devices",
+    "icon": "mdi:router-wireless",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "ikea_tradfri",
+    "name": "IKEA TRÅDFRI",
+    "description": "IKEA smart lighting and devices",
+    "icon": "mdi:lightbulb-group",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "lifx",
+    "name": "LIFX",
+    "description": "LIFX smart lighting",
+    "icon": "mdi:lightbulb-on",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "nanoleaf",
+    "name": "Nanoleaf",
+    "description": "Nanoleaf smart lighting panels",
+    "icon": "mdi:hexagon-multiple",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "ring",
+    "name": "Ring",
+    "description": "Ring doorbells and security cameras",
+    "icon": "mdi:doorbell-video",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "nest",
+    "name": "Google Nest",
+    "description": "Google Nest smart home devices",
+    "icon": "mdi:google-nest",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "ecobee",
+    "name": "Ecobee",
+    "description": "Ecobee thermostats",
+    "icon": "mdi:thermostat",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "honeywell",
+    "name": "Honeywell",
+    "description": "Honeywell smart thermostats",
+    "icon": "mdi:thermostat-box",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "wyze",
+    "name": "Wyze",
+    "description": "Wyze smart home devices",
+    "icon": "mdi:camera",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "arlo",
+    "name": "Arlo",
+    "description": "Arlo security cameras",
+    "icon": "mdi:cctv",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "amazon_alexa",
+    "name": "Amazon Alexa",
+    "description": "Amazon Alexa integration",
+    "icon": "mdi:amazon-alexa",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "google_assistant",
+    "name": "Google Assistant",
+    "description": "Google Assistant integration",
+    "icon": "mdi:google-assistant",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "homeassistant",
+    "name": "Home Assistant",
+    "description": "Connect to a Home Assistant instance running on Raspberry Pi or other hardware",
+    "icon": "mdi:home-assistant",
+    "supports_devices": false,
+    "is_cloud": false
+  },
+  {
+    "domain": "esphome",
+    "name": "ESPHome",
+    "description": "ESP8266/ESP32 devices running ESPHome firmware",
+    "icon": "mdi:chip",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "tasmota",
+    "name": "Tasmota",
+    "description": "Tasmota firmware for ESP8266/ESP32 devices",
+    "icon": "mdi:flash",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "mqtt",
+    "name": "MQTT",
+    "description": "MQTT broker and devices",
+    "icon": "mdi:message-text",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "lutron_caseta",
+    "name": "Lutron Caseta",
+    "description": "Lutron Caseta smart lighting and shades",
+    "icon": "mdi:light-switch",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "govee",
+    "name": "Govee",
+    "description": "Govee smart lighting and sensors",
+    "icon": "mdi:led-strip",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "wiz",
+    "name": "WiZ",
+    "description": "WiZ smart lighting",
+    "icon": "mdi:lightbulb-multiple",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "august",
+    "name": "August",
+    "description": "August smart locks",
+    "icon": "mdi:lock-smart",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "schlage",
+    "name": "Schlage",
+    "description": "Schlage smart locks",
+    "icon": "mdi:lock",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "yale",
+    "name": "Yale",
+    "description": "Yale smart locks",
+    "icon": "mdi:lock-outline",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "myq",
+    "name": "MyQ",
+    "description": "Chamberlain MyQ garage door openers",
+    "icon": "mdi:garage",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "simplisafe",
+    "name": "SimpliSafe",
+    "description": "SimpliSafe security system",
+    "icon": "mdi:shield-home",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "abode",
+    "name": "Abode",
+    "description": "Abode security system",
+    "icon": "mdi:security",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "reolink",
+    "name": "Reolink",
+    "description": "Reolink security cameras",
+    "icon": "mdi:cctv",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "unifiprotect",
+    "name": "UniFi Protect",
+    "description": "Ubiquiti UniFi Protect cameras",
+    "icon": "mdi:cctv",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "frigate",
+    "name": "Frigate",
+    "description": "Frigate NVR for camera integration",
+    "icon": "mdi:cctv",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "eufy",
+    "name": "Eufy",
+    "description": "Eufy security cameras and devices",
+    "icon": "mdi:camera",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "onvif",
+    "name": "ONVIF",
+    "description": "ONVIF-compatible IP cameras",
+    "icon": "mdi:camera-iris",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "sensi",
+    "name": "Sensi",
+    "description": "Emerson Sensi thermostats",
+    "icon": "mdi:thermostat",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "sense",
+    "name": "Sense",
+    "description": "Sense energy monitoring",
+    "icon": "mdi:lightning-bolt",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "apple_tv",
+    "name": "Apple TV",
+    "description": "Apple TV media players",
+    "icon": "mdi:apple",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "roku",
+    "name": "Roku",
+    "description": "Roku media players",
+    "icon": "mdi:roku",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "samsungtv",
+    "name": "Samsung TV",
+    "description": "Samsung Smart TV",
+    "icon": "mdi:television",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "lg_netcast",
+    "name": "LG TV",
+    "description": "LG Smart TV",
+    "icon": "mdi:television",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "sonos",
+    "name": "Sonos",
+    "description": "Sonos speakers",
+    "icon": "mdi:speaker",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "spotify",
+    "name": "Spotify",
+    "description": "Spotify music streaming",
+    "icon": "mdi:spotify",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "modbus",
+    "name": "Modbus",
+    "description": "Modbus industrial protocol",
+    "icon": "mdi:pipe",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "knx",
+    "name": "KNX",
+    "description": "KNX building automation",
+    "icon": "mdi:electric-switch",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "insteon",
+    "name": "Insteon",
+    "description": "Insteon devices",
+    "icon": "mdi:radio",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "somfy",
+    "name": "Somfy",
+    "description": "Somfy motorized shades and blinds",
+    "icon": "mdi:window-shutter",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "bond",
+    "name": "Bond Bridge",
+    "description": "Bond Bridge for RF devices",
+    "icon": "mdi:bridge",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "meross",
+    "name": "Meross",
+    "description": "Meross smart home devices",
+    "icon": "mdi:power-plug",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "kasa",
+    "name": "TP-Link Kasa",
+    "description": "TP-Link Kasa smart devices",
+    "icon": "mdi:router-wireless",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "homekit",
+    "name": "Apple HomeKit",
+    "description": "Apple HomeKit integration",
+    "icon": "mdi:apple",
+    "supports_devices": true,
+    "is_cloud": false
+  },
+  {
+    "domain": "smartthings",
+    "name": "Samsung SmartThings",
+    "description": "Samsung SmartThings integration",
+    "icon": "mdi:samsung",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "openweathermap",
+    "name": "OpenWeatherMap",
+    "description": "Weather data from OpenWeatherMap",
+    "icon": "mdi:weather-cloudy",
+    "supports_devices": true,
+    "is_cloud": true
+  },
+  {
+    "domain": "met",
+    "name": "Met Office",
+    "description": "UK Met Office weather data",
+    "icon": "mdi:weather-partly-cloudy",
+    "supports_devices": true,
+    "is_cloud": true
+  }
+]
+

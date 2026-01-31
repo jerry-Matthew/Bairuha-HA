@@ -26,18 +26,17 @@ async function createUser(email: string, password: string) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Default values for name and role, as they are not provided in the script arguments
-    // The original script only took email and password.
+    // Default values
     const name = email.split('@')[0]; // Derive a name from email
-    const role = 'user'; // Default role
 
     // Create user
+    // Using password_hash instead of password
     const newUser = await query(
-      "INSERT INTO users (name, email, password, role, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING id, email, role, is_active",
-      [name, email, hashedPassword, role]
+      "INSERT INTO users (name, email, password_hash, is_active, created_at, updated_at) VALUES ($1, $2, $3, true, NOW(), NOW()) RETURNING id, email, is_active",
+      [name, email, hashedPassword]
     );
 
-    console.log(`✅ User created successfully: ${newUser.rows[0].email} (${newUser.rows[0].role})`);
+    console.log(`✅ User created successfully: ${newUser.rows[0].email}`);
     console.log(`  ID: ${newUser.rows[0].id}`);
     console.log(`  Email: ${newUser.rows[0].email}`);
     console.log(`  Active: ${newUser.rows[0].is_active}`);

@@ -5,12 +5,17 @@
  */
 
 import { Module, forwardRef } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { Notification } from './entities/notification.entity';
 
 @Module({
-    imports: [forwardRef(() => RealtimeModule)],
+    imports: [
+        TypeOrmModule.forFeature([Notification]),
+        forwardRef(() => RealtimeModule)
+    ],
     controllers: [NotificationsController],
     providers: [NotificationsService],
     exports: [NotificationsService],

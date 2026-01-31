@@ -15,6 +15,7 @@ export class DeviceFlowConfirmDto {
     deviceType?: string;
     model?: string;
     manufacturer?: string;
+    areaId?: string;
 }
 
 // Response Types

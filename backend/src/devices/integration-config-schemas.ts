@@ -1,6 +1,7 @@
-
-import { Logger } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { IntegrationCatalog } from '../integrations/entities/integration-catalog.entity';
 
 export interface ConditionalConfig {
     field: string;
@@ -105,10 +106,14 @@ const INTEGRATION_SCHEMAS: Record<string, IntegrationConfigSchema> = {
     }
 };
 
+@Injectable()
 export class ConfigSchemaService {
     private readonly logger = new Logger(ConfigSchemaService.name);
 
-    constructor(private readonly pool: Pool) { }
+    constructor(
+        @InjectRepository(IntegrationCatalog)
+        private readonly catalogRepository: Repository<IntegrationCatalog>
+    ) { }
 
     async getConfigSchema(integrationId: string): Promise<IntegrationConfigSchema> {
         if (INTEGRATION_SCHEMAS[integrationId]) {
@@ -116,13 +121,13 @@ export class ConfigSchemaService {
         }
 
         try {
-            const res = await this.pool.query(
-                "SELECT flow_config FROM integration_catalog WHERE domain = $1",
-                [integrationId]
-            );
+            const catalog = await this.catalogRepository.findOne({
+                where: { domain: integrationId },
+                select: ['flowConfig']
+            });
 
-            if (res.rows.length > 0 && res.rows[0].flow_config) {
-                const flowConfig = res.rows[0].flow_config;
+            if (catalog && catalog.flowConfig) {
+                const flowConfig: any = catalog.flowConfig;
                 if (flowConfig.steps && flowConfig.steps.length > 0) {
                     return flowConfig.steps[0].schema || {};
                 }
@@ -149,14 +154,12 @@ export class ConfigSchemaService {
             const value = configData[fieldName];
 
             if (fieldSchema.required) {
-                // Conditional logic stubbed for brevity, assume shown
                 if (value === undefined || value === null || value === "") {
                     errors[fieldName] = `${fieldSchema.label || fieldSchema.description || fieldName} is required`;
                     return;
                 }
             }
 
-            // Basic type validation stub
             if (value !== undefined && value !== null && value !== "") {
                 if (fieldSchema.type === "number" && isNaN(Number(value))) {
                     errors[fieldName] = "Must be a number";

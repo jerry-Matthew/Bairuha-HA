@@ -1,245 +1,153 @@
-
-import { Injectable, Inject, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common';
-import { Pool } from 'pg';
-import { DATABASE_POOL } from '../database/database.module';
-import { Group, CreateGroupDto, UpdateGroupDto, GroupMember, GroupState } from './groups.types';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Group } from './entities/group.entity';
+import { GroupMember } from './entities/group-member.entity';
+import { CreateGroupDto, UpdateGroupDto, GroupState } from './groups.types';
 import { CommandsService } from '../commands/commands.service';
+import { EntityState } from '../devices/entities/entity-state.entity';
 
 @Injectable()
-export class GroupsService implements OnModuleInit {
+export class GroupsService {
     private readonly logger = new Logger(GroupsService.name);
 
     constructor(
-        @Inject(DATABASE_POOL) private readonly pool: Pool,
+        @InjectRepository(Group)
+        private readonly groupRepository: Repository<Group>,
+        @InjectRepository(GroupMember)
+        private readonly groupMemberRepository: Repository<GroupMember>,
+        @InjectRepository(EntityState)
+        private readonly entityRepository: Repository<EntityState>,
         private readonly commandsService: CommandsService,
     ) { }
 
-    async onModuleInit() {
-        await this.createTables();
-    }
+    async findAll(includeMembers = false): Promise<any[]> {
+        const groups = await this.groupRepository.find({
+            order: { name: 'ASC' },
+            relations: includeMembers ? ['members', 'members.entity'] : [],
+        });
 
-    private async createTables() {
-        let client;
-        try {
-            client = await this.pool.connect();
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS groups (
-                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                  name TEXT NOT NULL,
-                  icon TEXT,
-                  description TEXT,
-                  domain TEXT,
-                  created_at TIMESTAMPTZ DEFAULT now(),
-                  updated_at TIMESTAMPTZ DEFAULT now(),
-                  UNIQUE(name)
-                );
-            `);
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS group_members (
-                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                  group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-                  entity_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-                  created_at TIMESTAMPTZ DEFAULT now(),
-                  UNIQUE(group_id, entity_id)
-                );
-            `);
-
-            await client.query(`CREATE INDEX IF NOT EXISTS idx_groups_domain ON groups(domain);`);
-            await client.query(`CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name);`);
-            await client.query(`CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id);`);
-            await client.query(`CREATE INDEX IF NOT EXISTS idx_group_members_entity_id ON group_members(entity_id);`);
-
-            this.logger.log('Groups tables initialized');
-        } catch (error) {
-            this.logger.error('Failed to initialize groups tables', error);
-        } finally {
-            if (client) client.release();
-        }
-    }
-
-    async findAll(includeMembers = false): Promise<Group[]> {
-        const groupsResult = await this.pool.query<Group>(
-            `SELECT id, name, icon, description, domain, created_at as "createdAt", updated_at as "updatedAt" 
-             FROM groups ORDER BY name ASC`
-        );
-
-        const groups = groupsResult.rows;
-
-        // Populate member counts
+        const result = [];
         for (const group of groups) {
-            const countResult = await this.pool.query(
-                `SELECT COUNT(*) as count FROM group_members WHERE group_id = $1`,
-                [group.id]
-            );
-            group.memberCount = parseInt(countResult.rows[0].count);
+            const groupData: any = { ...group };
+            groupData.memberCount = await this.groupMemberRepository.count({ where: { groupId: group.id } });
 
             if (includeMembers) {
-                group.members = await this.getGroupMembers(group.id);
-                // Also calculate aggregated state
-                group.state = await this.calculateGroupState(group.id);
+                groupData.state = await this.calculateGroupState(group.id);
             }
+            result.push(groupData);
         }
-
-        return groups;
+        return result;
     }
 
-    async findOne(id: string, includeMembers = false, includeState = false): Promise<Group> {
-        const result = await this.pool.query<Group>(
-            `SELECT id, name, icon, description, domain, created_at as "createdAt", updated_at as "updatedAt" 
-             FROM groups WHERE id = $1`,
-            [id]
-        );
+    async findOne(id: string, includeMembers = false, includeState = false): Promise<any> {
+        const group = await this.groupRepository.findOne({
+            where: { id },
+            relations: includeMembers ? ['members', 'members.entity'] : [],
+        });
 
-        if (result.rows.length === 0) {
+        if (!group) {
             throw new NotFoundException(`Group with ID ${id} not found`);
         }
 
-        const group = result.rows[0];
-
-        const countResult = await this.pool.query(
-            `SELECT COUNT(*) as count FROM group_members WHERE group_id = $1`,
-            [group.id]
-        );
-        group.memberCount = parseInt(countResult.rows[0].count);
-
-        if (includeMembers) {
-            group.members = await this.getGroupMembers(group.id);
-        }
+        const groupData: any = { ...group };
+        groupData.memberCount = await this.groupMemberRepository.count({ where: { groupId: group.id } });
 
         if (includeState) {
-            group.state = await this.calculateGroupState(group.id);
+            groupData.state = await this.calculateGroupState(group.id);
         }
 
-        return group;
+        return groupData;
     }
 
     async create(dto: CreateGroupDto): Promise<Group> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
+        const group = this.groupRepository.create({
+            name: dto.name,
+            icon: dto.icon,
+            description: dto.description,
+            domain: dto.domain,
+        });
 
-            const result = await client.query<Group>(
-                `INSERT INTO groups (name, icon, description, domain) 
-                 VALUES ($1, $2, $3, $4) 
-                 RETURNING id, name, icon, description, domain, created_at as "createdAt", updated_at as "updatedAt"`,
-                [dto.name, dto.icon, dto.description, dto.domain]
-            );
+        const savedGroup = await this.groupRepository.save(group);
 
-            const group = result.rows[0];
-
-            if (dto.entityIds && dto.entityIds.length > 0) {
-                // dto.entityIds should be UUIDs or String IDs?
-                // Assuming UUIDs if internal, but API often uses string IDs.
-                // Let's assume for creation via code it might be UUIDs, but via API... 
-                // The frontend panel sends `selectedEntityIds` which are likely string IDs?
-                // Actually the frontend create dialog didn't send members.
-                // But just in case, let's treat them as string IDs and look them up.
-
-                for (const entityIdStr of dto.entityIds) {
-                    const entityRes = await client.query('SELECT id FROM entities WHERE entity_id = $1', [entityIdStr]);
-                    if (entityRes.rows.length > 0) {
-                        const entityUuid = entityRes.rows[0].id;
-                        await client.query(
-                            `INSERT INTO group_members (group_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-                            [group.id, entityUuid]
-                        );
-                    }
+        if (dto.entityIds && dto.entityIds.length > 0) {
+            for (const entityIdStr of dto.entityIds) {
+                const entity = await this.entityRepository.findOne({ where: { entityId: entityIdStr } });
+                if (entity) {
+                    await this.groupMemberRepository.save({
+                        groupId: savedGroup.id,
+                        entityId: entity.id,
+                    });
                 }
             }
-
-            await client.query('COMMIT');
-            return this.findOne(group.id);
-        } catch (error) {
-            await client.query('ROLLBACK');
-            throw error;
-        } finally {
-            client.release();
         }
+
+        return this.findOne(savedGroup.id, true);
     }
 
     async update(id: string, dto: UpdateGroupDto): Promise<Group> {
-        const updates: string[] = [];
-        const values: any[] = [];
-        let pIdx = 1;
+        const group = await this.groupRepository.findOne({ where: { id } });
+        if (!group) throw new NotFoundException('Group not found');
 
-        if (dto.name !== undefined) { updates.push(`name = $${pIdx++}`); values.push(dto.name); }
-        if (dto.icon !== undefined) { updates.push(`icon = $${pIdx++}`); values.push(dto.icon); }
-        if (dto.description !== undefined) { updates.push(`description = $${pIdx++}`); values.push(dto.description); }
-        if (dto.domain !== undefined) { updates.push(`domain = $${pIdx++}`); values.push(dto.domain); }
+        Object.assign(group, {
+            name: dto.name ?? group.name,
+            icon: dto.icon ?? group.icon,
+            description: dto.description ?? group.description,
+            domain: dto.domain ?? group.domain,
+        });
 
-        if (updates.length > 0) {
-            updates.push(`updated_at = NOW()`);
-            values.push(id);
-            await this.pool.query(
-                `UPDATE groups SET ${updates.join(', ')} WHERE id = $${pIdx}`,
-                values
-            );
-        }
-
+        await this.groupRepository.save(group);
         return this.findOne(id);
     }
 
     async remove(id: string): Promise<void> {
-        await this.pool.query(`DELETE FROM groups WHERE id = $1`, [id]);
+        await this.groupRepository.delete(id);
     }
 
     async addMember(groupId: string, entityIdStr: string): Promise<void> {
-        // Lookup UUID
-        const entityRes = await this.pool.query(`SELECT id FROM entities WHERE entity_id = $1`, [entityIdStr]);
-        if (entityRes.rows.length === 0) {
+        const entity = await this.entityRepository.findOne({ where: { entityId: entityIdStr } });
+        if (!entity) {
             throw new NotFoundException(`Entity ${entityIdStr} not found`);
         }
-        const entityUuid = entityRes.rows[0].id;
 
-        await this.pool.query(
-            `INSERT INTO group_members (group_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-            [groupId, entityUuid]
-        );
+        await this.groupMemberRepository.save({
+            groupId,
+            entityId: entity.id,
+        });
     }
 
     async removeMember(groupId: string, entityIdStr: string): Promise<void> {
-        // Lookup UUID
-        const entityRes = await this.pool.query(`SELECT id FROM entities WHERE entity_id = $1`, [entityIdStr]);
-        if (entityRes.rows.length === 0) {
-            // Maybe it was deleted? Just try to delete from members by joining
-            return;
-        }
-        const entityUuid = entityRes.rows[0].id;
+        const entity = await this.entityRepository.findOne({ where: { entityId: entityIdStr } });
+        if (!entity) return;
 
-        await this.pool.query(
-            `DELETE FROM group_members WHERE group_id = $1 AND entity_id = $2`,
-            [groupId, entityUuid]
-        );
+        await this.groupMemberRepository.delete({
+            groupId,
+            entityId: entity.id,
+        });
     }
 
-    async getGroupMembers(groupId: string): Promise<GroupMember[]> {
-        const result = await this.pool.query<GroupMember>(
-            `SELECT gm.id, gm.group_id as "groupId", gm.entity_id as "entityId", 
-                    e.entity_id as "entityEntityId", gm.created_at as "createdAt"
-             FROM group_members gm
-             JOIN entities e ON gm.entity_id = e.id
-             WHERE gm.group_id = $1`,
-            [groupId]
-        );
-        // Note: I mapped entity UUID to "entityId" in interface, and string id to "entityEntityId".
-        // But Typescript interface says entityId is string (UUID usually).
-        // Let's stick to consistent naming.
-        return result.rows;
+    async getGroupMembers(groupId: string): Promise<any[]> {
+        const members = await this.groupMemberRepository.find({
+            where: { groupId },
+            relations: ['entity'],
+        });
+
+        return members.map(m => ({
+            id: m.id,
+            groupId: m.groupId,
+            entityId: m.entityId,
+            entityEntityId: m.entity?.entityId,
+            createdAt: m.createdAt,
+        }));
     }
 
     async calculateGroupState(groupId: string): Promise<GroupState> {
-        // Get all members and their current states directly from entities table
-        const result = await this.pool.query(
-            `SELECT e.entity_id, e.state 
-             FROM group_members gm
-             JOIN entities e ON gm.entity_id = e.id
-             WHERE gm.group_id = $1`,
-            [groupId]
-        );
+        const members = await this.groupMemberRepository.find({
+            where: { groupId },
+            relations: ['entity'],
+        });
 
-        const memberStates = result.rows.map(r => ({ entityId: r.entity_id, state: r.state }));
-
-        if (memberStates.length === 0) {
+        if (members.length === 0) {
             return {
                 state: 'unknown',
                 allOn: false,
@@ -248,6 +156,11 @@ export class GroupsService implements OnModuleInit {
                 memberStates: []
             };
         }
+
+        const memberStates = members.map(m => ({
+            entityId: m.entity?.entityId || 'unknown',
+            state: m.entity?.state || 'unknown'
+        }));
 
         const onStates = ['on', 'open', 'home', 'active'];
         const offStates = ['off', 'closed', 'away', 'inactive'];
@@ -261,8 +174,8 @@ export class GroupsService implements OnModuleInit {
         if (allOn) state = 'on';
         else if (allOff) state = 'off';
         else if (anyOn && anyOff) state = 'mixed';
-        else if (anyOn) state = 'on'; // default to on if some are on
-        else state = 'off'; // default to off
+        else if (anyOn) state = 'on';
+        else state = 'off';
 
         return {
             state,

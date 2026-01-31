@@ -1,9 +1,14 @@
-import { Injectable, Inject, ConflictException, Logger, NotFoundException } from '@nestjs/common';
-import { DATABASE_POOL } from '../database/database.module';
-import { Pool } from 'pg';
+import { Injectable, ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Not, In } from 'typeorm';
 import { GithubService } from './github.service';
 import { mapManifestToCatalog, CatalogEntry } from './manifest-mapper';
 import { calculateVersionHash, detectChanges } from './utils/hashing.utils';
+import { Integration } from './entities/integration.entity';
+import { IntegrationCatalog } from './entities/integration-catalog.entity';
+import { CatalogSyncHistory } from './entities/catalog-sync-history.entity';
+import { CatalogSyncChange } from './entities/catalog-sync-change.entity';
+import { ConfigEntry } from './entities/config-entry.entity';
 
 export interface SyncResult {
     syncId: string;
@@ -24,62 +29,64 @@ export class IntegrationsService {
     private currentSyncId: string | null = null;
 
     constructor(
-        @Inject(DATABASE_POOL) private readonly pool: Pool,
+        @InjectRepository(Integration)
+        private readonly integrationRepository: Repository<Integration>,
+        @InjectRepository(IntegrationCatalog)
+        private readonly catalogRepository: Repository<IntegrationCatalog>,
+        @InjectRepository(CatalogSyncHistory)
+        private readonly syncHistoryRepository: Repository<CatalogSyncHistory>,
+        @InjectRepository(CatalogSyncChange)
+        private readonly syncChangeRepository: Repository<CatalogSyncChange>,
+        @InjectRepository(ConfigEntry)
+        private readonly configEntryRepository: Repository<ConfigEntry>,
         private readonly githubService: GithubService,
     ) { }
 
     async getIntegrations(query?: string, limit: number = 50, offset: number = 0) {
-        const params: any[] = [];
-        let whereClause = 'WHERE 1=1'; // Allow all devices, frontend filters/labels them
+        const qb = this.catalogRepository
+            .createQueryBuilder('c')
+            .leftJoin('integrations', 'r', 'c.domain = r.domain')
+            .leftJoin(
+                'config_entries',
+                'ce',
+                "c.domain = ce.integration_domain AND ce.status = 'loaded'",
+            )
+            .select([
+                'c.domain',
+                'c.name',
+                'c.description',
+                'c.icon',
+                'c.brand_image_url',
+                'c.is_cloud',
+                'c.supports_devices',
+                'c.metadata',
+                'r.status as status',
+                'COALESCE(ce.id IS NOT NULL, r.id IS NOT NULL, false) AS "isConfigured"',
+            ]);
 
         if (query) {
-            params.push(`%${query.toLowerCase()}%`);
-            whereClause += ` AND (LOWER(c.name) LIKE $${params.length} OR LOWER(c.domain) LIKE $${params.length})`;
+            qb.where('LOWER(c.name) LIKE :query OR LOWER(c.domain) LIKE :query', {
+                query: `%${query.toLowerCase()}%`,
+            });
         }
 
-        // Add limit and offset
-        params.push(limit);
-        const limitParam = `$${params.length}`;
-        params.push(offset);
-        const offsetParam = `$${params.length}`;
+        qb.orderBy('c.name', 'ASC').limit(limit).offset(offset);
 
-        const sql = `
-            SELECT
-                c.domain,
-                c.name,
-                c.description,
-                c.icon,
-                c.brand_image_url,
-                c.is_cloud AS "isCloud",
-                c.supports_devices,
-                c.metadata,
-                COALESCE(ce.id IS NOT NULL, r.id IS NOT NULL, false) AS "isConfigured",
-                r.status
-            FROM integration_catalog c
-            LEFT JOIN integrations r
-                ON c.domain = r.domain
-            LEFT JOIN config_entries ce
-                ON c.domain = ce.integration_domain AND ce.status = 'loaded'
-            ${whereClause}
-            ORDER BY c.name ASC
-            LIMIT ${limitParam} OFFSET ${offsetParam}
-        `;
-
-        const result = await this.pool.query(sql, params);
+        const rawResults = await qb.getRawMany();
 
         return {
-            integrations: result.rows.map(row => ({
-                id: row.domain,
-                domain: row.domain,
-                name: row.name,
-                description: row.description,
-                icon: row.icon,
-                brandImageUrl: row.brand_image_url,
-                supportsDeviceCreation: row.supports_devices,
-                isCloud: row.isCloud,
+            integrations: rawResults.map((row) => ({
+                id: row.c_domain,
+                domain: row.c_domain,
+                name: row.c_name,
+                description: row.c_description,
+                icon: row.c_icon,
+                brandImageUrl: row.c_brand_image_url,
+                supportsDeviceCreation: row.c_supports_devices,
+                isCloud: row.c_is_cloud,
                 isConfigured: row.isConfigured,
-                metadata: row.metadata
-            }))
+                metadata: row.c_metadata,
+            })),
         };
     }
 
@@ -87,97 +94,76 @@ export class IntegrationsService {
     async getSyncStatus(syncId?: string) {
         if (syncId) {
             // Get specific sync details
-            const syncResult = await this.pool.query(
-                `SELECT 
-          id, sync_type, started_at, completed_at, status,
-          total_integrations, new_integrations, updated_integrations,
-          deleted_integrations, error_count, error_details, metadata
-         FROM catalog_sync_history
-         WHERE id = $1`,
-                [syncId]
-            );
+            const sync = await this.syncHistoryRepository.findOne({
+                where: { id: syncId },
+                relations: ['changes'],
+                order: {
+                    changes: { createdAt: 'DESC' },
+                },
+            });
 
-            if (syncResult.rows.length === 0) {
+            if (!sync) {
                 throw new NotFoundException('Sync not found');
             }
-
-            const sync = syncResult.rows[0];
-
-            // Get changes for this sync
-            const changesResult = await this.pool.query(
-                `SELECT domain, change_type, previous_version_hash, new_version_hash, 
-                changed_fields, created_at
-         FROM catalog_sync_changes
-         WHERE sync_id = $1
-         ORDER BY created_at DESC`,
-                [syncId]
-            );
 
             return {
                 sync: {
                     id: sync.id,
-                    type: sync.sync_type,
-                    startedAt: sync.started_at,
-                    completedAt: sync.completed_at,
+                    type: sync.syncType,
+                    startedAt: sync.startedAt,
+                    completedAt: sync.completedAt,
                     status: sync.status,
-                    total: sync.total_integrations,
-                    new: sync.new_integrations,
-                    updated: sync.updated_integrations,
-                    deleted: sync.deleted_integrations,
-                    errors: sync.error_count,
-                    errorDetails: sync.error_details || [],
+                    total: sync.totalIntegrations,
+                    new: sync.newIntegrations,
+                    updated: sync.updatedIntegrations,
+                    deleted: sync.deletedIntegrations,
+                    errors: sync.errorCount,
+                    errorDetails: sync.errorDetails || [],
                     metadata: sync.metadata,
                 },
-                changes: changesResult.rows.map(row => ({
+                changes: sync.changes.map((row) => ({
                     domain: row.domain,
-                    changeType: row.change_type,
-                    previousHash: row.previous_version_hash,
-                    newHash: row.new_version_hash,
-                    changedFields: row.changed_fields || [],
-                    createdAt: row.created_at,
+                    changeType: row.changeType,
+                    previousHash: row.previousVersionHash,
+                    newHash: row.newVersionHash,
+                    changedFields: row.changedFields || [],
+                    createdAt: row.createdAt,
                 })),
             };
         } else {
             // Get current sync status
-            const currentSyncResult = await this.pool.query(
-                `SELECT id, sync_type, started_at, completed_at, status,
-                total_integrations, new_integrations, updated_integrations,
-                deleted_integrations, error_count
-         FROM catalog_sync_history
-         WHERE status = 'running'
-         ORDER BY started_at DESC
-         LIMIT 1`
-            );
+            const currentSync = await this.syncHistoryRepository.findOne({
+                where: { status: 'running' },
+                order: { startedAt: 'DESC' },
+            });
 
             // Get last completed sync
-            const lastSyncResult = await this.pool.query(
-                `SELECT id, sync_type, started_at, completed_at, status,
-                total_integrations, new_integrations, updated_integrations,
-                deleted_integrations, error_count
-         FROM catalog_sync_history
-         WHERE status IN ('completed', 'failed')
-         ORDER BY started_at DESC
-         LIMIT 1`
-            );
+            const lastSync = await this.syncHistoryRepository.findOne({
+                where: [
+                    { status: 'completed' },
+                    { status: 'failed' },
+                ],
+                order: { startedAt: 'DESC' },
+            });
 
             return {
-                current: currentSyncResult.rows.length > 0 ? {
-                    syncId: currentSyncResult.rows[0].id,
-                    startedAt: currentSyncResult.rows[0].started_at,
-                    status: currentSyncResult.rows[0].status,
-                    type: currentSyncResult.rows[0].sync_type,
+                current: currentSync ? {
+                    syncId: currentSync.id,
+                    startedAt: currentSync.startedAt,
+                    status: currentSync.status,
+                    type: currentSync.syncType,
                 } : null,
-                lastSync: lastSyncResult.rows.length > 0 ? {
-                    syncId: lastSyncResult.rows[0].id,
-                    startedAt: lastSyncResult.rows[0].started_at,
-                    completedAt: lastSyncResult.rows[0].completed_at,
-                    status: lastSyncResult.rows[0].status,
-                    type: lastSyncResult.rows[0].sync_type,
-                    total: lastSyncResult.rows[0].total_integrations,
-                    new: lastSyncResult.rows[0].new_integrations,
-                    updated: lastSyncResult.rows[0].updated_integrations,
-                    deleted: lastSyncResult.rows[0].deleted_integrations,
-                    errors: lastSyncResult.rows[0].error_count,
+                lastSync: lastSync ? {
+                    syncId: lastSync.id,
+                    startedAt: lastSync.startedAt,
+                    completedAt: lastSync.completedAt,
+                    status: lastSync.status,
+                    type: lastSync.syncType,
+                    total: lastSync.totalIntegrations,
+                    new: lastSync.newIntegrations,
+                    updated: lastSync.updatedIntegrations,
+                    deleted: lastSync.deletedIntegrations,
+                    errors: lastSync.errorCount,
                 } : null,
                 syncInProgress: this.syncInProgress,
             };
@@ -185,34 +171,20 @@ export class IntegrationsService {
     }
 
     async triggerSync(options: { type?: 'full' | 'incremental' | 'manual'; dryRun?: boolean; force?: boolean }) {
-        const type = options.type || 'incremental';
+        const type = (options.type || 'incremental') as 'full' | 'incremental' | 'manual';
 
         if (this.syncInProgress && !options.force) {
             throw new ConflictException('Sync already in progress');
         }
 
-        // Start sync asynchronously
-        this.startSyncProcess(type, options.dryRun).catch(err => {
-            this.logger.error(`Sync failed: ${err.message}`, err.stack);
+        // Insert sync record
+        const sync = await this.syncHistoryRepository.save({
+            syncType: type,
+            status: 'running',
+            startedAt: new Date(),
         });
 
-        // We can't return the ID immediately if we rely on async start, 
-        // but typically we'd insert the record first.
-        // For this implementation, let's just return a message saying it started.
-        // A better approach in Nest is to insert the 'running' record here and return its ID.
-
-        // Check if we can get the ID from the async process or pre-insert.
-        // Let's rely on the method in startSyncProcess to insert it.
-        // Wait slightly to ensure the ID is created? Or insert here.
-
-        // Let's insert here to return the ID immediately.
-        const result = await this.pool.query(
-            `INSERT INTO catalog_sync_history (sync_type, status, started_at)
-       VALUES ($1, 'running', now())
-       RETURNING id`,
-            [type]
-        );
-        const syncId = result.rows[0].id;
+        const syncId = sync.id;
         this.currentSyncId = syncId;
         this.syncInProgress = true;
 
@@ -391,7 +363,6 @@ export class IntegrationsService {
     }
 
     private async performFullSync(syncId: string, haEntries: CatalogEntry[]): Promise<SyncResult> {
-        // Similar to incremental but processes all
         const startTime = Date.now();
         const result: SyncResult = {
             syncId,
@@ -405,27 +376,25 @@ export class IntegrationsService {
             duration: 0,
         };
 
-        // For full sync, we just upsert everything basically
-        // But we still want to track what actually changed for stats
-        // So we can reuse the incremental logic or check DB for each
-
-        // Let's implement simpler loop
         for (const entry of haEntries) {
             try {
                 const hash = calculateVersionHash(entry).hash;
-                const existing = await this.pool.query('SELECT version_hash FROM integration_catalog WHERE domain = $1', [entry.domain]);
+                const existing = await this.catalogRepository.findOne({
+                    where: { domain: entry.domain },
+                    select: ['versionHash'],
+                });
 
-                if (existing.rows.length === 0) {
+                if (!existing) {
                     await this.importIntegration(entry);
                     await this.storeVersionHash(entry.domain, hash);
                     await this.recordChange(syncId, entry.domain, 'new', null, hash);
                     result.new++;
                 } else {
-                    const oldHash = existing.rows[0].version_hash;
+                    const oldHash = existing.versionHash;
                     if (oldHash !== hash) {
                         await this.updateIntegration(entry);
                         await this.storeVersionHash(entry.domain, hash);
-                        await this.recordChange(syncId, entry.domain, 'updated', oldHash, hash, ['full_sync']);
+                        await this.recordChange(syncId, entry.domain, 'updated', oldHash || null, hash, ['full_sync']);
                         result.updated++;
                     } else {
                         await this.storeVersionHash(entry.domain, hash); // Update last_synced_at
@@ -438,11 +407,15 @@ export class IntegrationsService {
         }
 
         // Deprecate missing
-        const haDomains = new Set(haEntries.map(e => e.domain));
-        const allDomains = await this.pool.query("SELECT domain FROM integration_catalog WHERE sync_status != 'deprecated'");
-        for (const row of allDomains.rows) {
-            if (!haDomains.has(row.domain)) {
-                await this.markIntegrationDeprecated(row.domain);
+        const haDomains = new Set(haEntries.map((e) => e.domain));
+        const allActive = await this.catalogRepository.find({
+            where: { syncStatus: Not('deprecated' as any) },
+            select: ['domain'],
+        });
+
+        for (const item of allActive) {
+            if (!haDomains.has(item.domain)) {
+                await this.markIntegrationDeprecated(item.domain);
                 result.deleted++;
             }
         }
@@ -452,32 +425,28 @@ export class IntegrationsService {
     }
 
     private async getDatabaseCatalog() {
-        const result = await this.pool.query(`
-        SELECT domain, name, description, icon, supports_devices, is_cloud,
-        documentation_url, flow_type, flow_config, handler_class, metadata,
-        brand_image_url, version_hash
-        FROM integration_catalog
-        WHERE sync_status != 'deprecated'
-      `);
+        const results = await this.catalogRepository.find({
+            where: { syncStatus: Not('deprecated' as any) },
+        });
 
         const map = new Map<string, { entry: CatalogEntry; versionHash: string | null }>();
-        for (const row of result.rows) {
+        for (const row of results) {
             map.set(row.domain, {
                 entry: {
                     domain: row.domain,
                     name: row.name,
                     description: row.description,
                     icon: row.icon,
-                    supports_devices: row.supports_devices,
-                    is_cloud: row.is_cloud,
-                    documentation_url: row.documentation_url,
-                    flow_type: row.flow_type,
-                    flow_config: row.flow_config,
-                    handler_class: row.handler_class,
+                    supports_devices: row.supportsDevices,
+                    is_cloud: row.isCloud,
+                    documentation_url: row.documentationUrl,
+                    flow_type: row.flowType as any,
+                    flow_config: row.flowConfig,
+                    handler_class: row.handlerClass,
                     metadata: row.metadata,
-                    brand_image_url: row.brand_image_url
+                    brand_image_url: row.brandImageUrl,
                 },
-                versionHash: row.version_hash
+                versionHash: row.versionHash || null,
             });
         }
         return map;
@@ -489,26 +458,21 @@ export class IntegrationsService {
 
     // Database helper methods
     private async importIntegration(entry: CatalogEntry) {
-        await this.pool.query(
-            `INSERT INTO integration_catalog 
-         (domain, name, description, icon, supports_devices, is_cloud, documentation_url, brand_image_url,
-          flow_type, flow_config, handler_class, metadata, sync_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'synced')
-         ON CONFLICT (domain) DO UPDATE
-         SET name = EXCLUDED.name, description = EXCLUDED.description, icon = EXCLUDED.icon,
-             supports_devices = EXCLUDED.supports_devices, is_cloud = EXCLUDED.is_cloud,
-             documentation_url = EXCLUDED.documentation_url, brand_image_url = EXCLUDED.brand_image_url,
-             flow_type = EXCLUDED.flow_type, flow_config = EXCLUDED.flow_config,
-             handler_class = EXCLUDED.handler_class, metadata = EXCLUDED.metadata,
-             sync_status = 'synced', updated_at = now()`,
-            [
-                entry.domain, entry.name, entry.description, entry.icon, entry.supports_devices, entry.is_cloud,
-                entry.documentation_url, entry.brand_image_url, entry.flow_type || 'manual',
-                entry.flow_config ? JSON.stringify(entry.flow_config) : null,
-                entry.handler_class,
-                entry.metadata ? JSON.stringify(entry.metadata) : null
-            ]
-        );
+        await this.catalogRepository.save({
+            domain: entry.domain,
+            name: entry.name,
+            description: entry.description,
+            icon: entry.icon,
+            supportsDevices: entry.supports_devices,
+            isCloud: entry.is_cloud,
+            documentationUrl: entry.documentation_url,
+            brandImageUrl: entry.brand_image_url,
+            flowType: entry.flow_type || 'manual',
+            flowConfig: entry.flow_config,
+            handlerClass: entry.handler_class,
+            metadata: entry.metadata,
+            syncStatus: 'synced',
+        });
     }
 
     private async updateIntegration(entry: CatalogEntry) {
@@ -517,45 +481,58 @@ export class IntegrationsService {
     }
 
     private async markIntegrationDeprecated(domain: string) {
-        await this.pool.query(
-            `UPDATE integration_catalog SET sync_status = 'deprecated', updated_at = now() WHERE domain = $1`,
-            [domain]
-        );
+        await this.catalogRepository.update(domain, {
+            syncStatus: 'deprecated',
+        });
     }
 
     private async storeVersionHash(domain: string, hash: string) {
-        await this.pool.query(
-            `UPDATE integration_catalog SET version_hash = $1, last_synced_at = now(), sync_status = 'synced' WHERE domain = $2`,
-            [hash, domain]
-        );
+        await this.catalogRepository.update(domain, {
+            versionHash: hash,
+            lastSyncedAt: new Date(),
+            syncStatus: 'synced',
+        });
     }
 
-    private async recordChange(syncId: string, domain: string, changeType: string, prevHash: string | null, newHash: string | null, changedFields?: string[]) {
-        await this.pool.query(
-            `INSERT INTO catalog_sync_changes (sync_id, domain, change_type, previous_version_hash, new_version_hash, changed_fields)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-            [syncId, domain, changeType, prevHash, newHash, changedFields ? JSON.stringify(changedFields) : null]
-        );
+    private async recordChange(
+        syncId: string,
+        domain: string,
+        changeType: 'new' | 'updated' | 'deleted' | 'deprecated',
+        prevHash: string | null,
+        newHash: string | null,
+        changedFields?: string[],
+    ) {
+        await this.syncChangeRepository.save({
+            syncId,
+            domain,
+            changeType,
+            previousVersionHash: prevHash || undefined,
+            newVersionHash: newHash || undefined,
+            changedFields,
+        });
     }
 
     private async completeSync(syncId: string, result: SyncResult) {
-        await this.pool.query(
-            `UPDATE catalog_sync_history
-         SET status = $1, completed_at = now(),
-             total_integrations = $2, new_integrations = $3, updated_integrations = $4,
-             deleted_integrations = $5, error_count = $6, error_details = $7
-         WHERE id = $8`,
-            [result.status, result.total, result.new, result.updated, result.deleted, result.errors, JSON.stringify(result.errorDetails), syncId]
-        );
+        await this.syncHistoryRepository.update(syncId, {
+            status: result.status,
+            completedAt: new Date(),
+            totalIntegrations: result.total,
+            newIntegrations: result.new,
+            updatedIntegrations: result.updated,
+            deletedIntegrations: result.deleted,
+            errorCount: result.errors,
+            errorDetails: result.errorDetails,
+        });
         this.syncInProgress = false;
         this.currentSyncId = null;
     }
 
     private async failSync(syncId: string, error: Error) {
-        await this.pool.query(
-            `UPDATE catalog_sync_history SET status = 'failed', completed_at = now(), error_details = $1 WHERE id = $2`,
-            [JSON.stringify([{ domain: 'system', error: error.message }]), syncId]
-        );
+        await this.syncHistoryRepository.update(syncId, {
+            status: 'failed',
+            completedAt: new Date(),
+            errorDetails: [{ domain: 'system', error: error.message }],
+        });
         this.syncInProgress = false;
         this.currentSyncId = null;
     }

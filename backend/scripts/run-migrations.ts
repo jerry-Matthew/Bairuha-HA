@@ -65,7 +65,7 @@ async function markMigrationAsExecuted(filename: string) {
 }
 
 async function getMigrationFiles(): Promise<Migration[]> {
-  const migrationsDir = path.join(process.cwd(), "database", "migrations");
+  const migrationsDir = path.join(process.cwd(), "database_legacy", "migrations");
 
   if (!fs.existsSync(migrationsDir)) {
     throw new Error(`Migrations directory not found: ${migrationsDir}`);

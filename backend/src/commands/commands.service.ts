@@ -1,17 +1,10 @@
-import { Injectable, NotFoundException, Inject } from '@nestjs/common';
-import { Pool } from 'pg';
-import { DATABASE_POOL } from '../database/database.module';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Command as CommandEntity } from './entities/command.entity';
+import { EntityState } from '../devices/entities/entity-state.entity';
 import { HARestClient, HARestClientError } from '../home-assistant/ha-rest-client.service';
 import { EntitiesService } from '../devices/entities.service';
-
-export interface Command {
-    id: string;
-    entity_id: string;
-    command: string;
-    payload: Record<string, any>;
-    status: string;
-    created_at: Date;
-}
 
 /**
  * Map Bairuha command to Home Assistant service name
@@ -59,36 +52,38 @@ function mapCommandToHAService(domain: string, command: string): string {
 
 @Injectable()
 export class CommandsService {
+    private readonly logger = new Logger(CommandsService.name);
+
     constructor(
-        @Inject(DATABASE_POOL) private readonly pool: Pool,
+        @InjectRepository(CommandEntity)
+        private readonly commandRepository: Repository<CommandEntity>,
+        @InjectRepository(EntityState)
+        private readonly entityRepository: Repository<EntityState>,
         private readonly haRestClient: HARestClient,
         private readonly entitiesService: EntitiesService
     ) { }
 
     async createCommand(entityId: string, command: string, payload: Record<string, any>) {
         // Look up entity by entity_id string (e.g., "switch.patio_light_power")
-        const entityResult = await this.pool.query(
-            `SELECT id, entity_id as "entityId", source, ha_entity_id as "haEntityId", domain FROM entities WHERE entity_id = $1`,
-            [entityId]
-        );
+        const entity = await this.entityRepository.findOne({
+            where: { entityId: entityId }
+        });
 
-        if (entityResult.rows.length === 0) {
+        if (!entity) {
             throw new NotFoundException('Entity not found');
         }
 
-        const entity = entityResult.rows[0];
-
         // Create command record with status 'pending'
-        const commandResult = await this.pool.query(
-            `INSERT INTO commands (entity_id, command, payload, status, created_at)
-             VALUES ($1, $2, $3, $4, NOW())
-             RETURNING id, entity_id as "entityId", command, payload, status, created_at as "createdAt"`,
-            [entity.id, command, JSON.stringify(payload), 'pending']
-        );
+        const commandRecord = this.commandRepository.create({
+            entityId: entity.id,
+            command,
+            payload,
+            status: 'pending',
+        });
 
-        const commandRecord = commandResult.rows[0];
+        const savedCommand = await this.commandRepository.save(commandRecord);
 
-        // Execute command via Home Assistant service call if entity has ha_entity_id
+        // Execute command via Home Assistant service call if entity has haEntityId
         let executionResult = {
             queued: false,
             success: false,
@@ -97,23 +92,19 @@ export class CommandsService {
 
         if (entity.haEntityId && (entity.source === 'homeassistant' || entity.source === 'ha')) {
             try {
-                // Extract domain from ha_entity_id (e.g., "switch.living_room" -> "switch")
                 const domain = entity.haEntityId.split('.')[0];
                 const service = mapCommandToHAService(domain, command);
 
-                // Build service data
                 const serviceData: Record<string, any> = {
                     entity_id: entity.haEntityId,
                     ...payload
                 };
 
-                // Call Home Assistant service
                 await this.haRestClient.callService(domain, service, serviceData);
-
                 executionResult.success = true;
-                console.log(`[Commands] Successfully executed HA service call for ${entity.haEntityId}: ${domain}.${service}`);
+                this.logger.log(`Successfully executed HA service call for ${entity.haEntityId}: ${domain}.${service}`);
             } catch (error) {
-                console.error('Failed to execute command via HA:', error);
+                this.logger.error('Failed to execute command via HA:', error);
 
                 if (error instanceof HARestClientError && error.isRetryable) {
                     executionResult.queued = true;
@@ -124,23 +115,28 @@ export class CommandsService {
             }
         } else {
             // For internal entities, update the entity state directly
-            // This will trigger activity logging
             try {
                 const newState = command === 'turn_on' ? 'on' : command === 'turn_off' ? 'off' : command;
                 await this.entitiesService.updateEntityState(entity.id, newState, payload);
                 executionResult.success = true;
-                console.log(`[Commands] Updated internal entity ${entity.entityId} to state: ${newState}`);
+                this.logger.log(`Updated internal entity ${entity.entityId} to state: ${newState}`);
             } catch (error) {
-                console.error('Failed to update internal entity state:', error);
+                this.logger.error('Failed to update internal entity state:', error);
                 executionResult.error = error instanceof Error ? error.message : 'Unknown error';
             }
         }
 
-        // Return result with command ID
+        // Update command status if needed
+        if (executionResult.success) {
+            await this.commandRepository.update(savedCommand.id, { status: 'executed' });
+        } else if (executionResult.queued) {
+            await this.commandRepository.update(savedCommand.id, { status: 'queued' });
+        }
+
         return {
             status: executionResult.queued ? 'queued' : (executionResult.success ? 'executed' : 'accepted'),
-            commandId: commandRecord.id,
-            entityId: entity.entityId, // Return entity_id string, not UUID
+            commandId: savedCommand.id,
+            entityId: entity.entityId,
             queued: executionResult.queued,
             success: executionResult.success,
             error: executionResult.error,

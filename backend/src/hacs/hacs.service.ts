@@ -5,9 +5,10 @@
  * Handles install, update, refresh, and state management
  */
 
-import { Injectable, Logger, Inject, OnModuleInit } from '@nestjs/common';
-import { Pool } from 'pg';
-import { DATABASE_POOL } from '../database/database.module';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { HacsExtension as HacsExtensionEntity } from './entities/hacs-extension.entity';
 import { getAllCatalogEntries, getCatalogEntryByFullName, type HACSCatalogEntry } from './utils/hacs-catalog';
 import { fetchGitHubMetadata } from './utils/hacs-github-utils';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -29,92 +30,27 @@ export class HacsService implements OnModuleInit {
     private readonly logger = new Logger(HacsService.name);
 
     constructor(
-        @Inject(DATABASE_POOL) private readonly pool: Pool,
+        @InjectRepository(HacsExtensionEntity)
+        private readonly hacsRepository: Repository<HacsExtensionEntity>,
         private readonly notificationsService: NotificationsService,
     ) { }
 
     async onModuleInit() {
-        await this.ensureTableExists();
-    }
-
-    private async ensureTableExists() {
-        const query = `
-            CREATE TABLE IF NOT EXISTS hacs_extensions (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                type TEXT NOT NULL,
-                github_repo TEXT NOT NULL,
-                stars INTEGER DEFAULT 0,
-                downloads INTEGER DEFAULT 0,
-                last_activity TEXT,
-                version TEXT,
-                installed_version TEXT,
-                status TEXT NOT NULL,
-                restart_required BOOLEAN DEFAULT FALSE,
-                avatar_url TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        `;
-        try {
-            await this.pool.query(query);
-            this.logger.log('Ensured hacs_extensions table exists');
-        } catch (error: any) {
-            this.logger.error(`Failed to ensure hacs_extensions table exists: ${error.message}`);
-        }
+        // Schema synchronization is handled by TypeORM globally
     }
 
     // --- Database Helpers ---
 
-    private async getIntegration(id: string): Promise<HacsExtension | null> {
-        const query = `
-            SELECT 
-                id, name, description, type, github_repo as "githubRepo", 
-                stars, downloads, last_activity as "lastActivity", 
-                version, installed_version as "installedVersion", 
-                status, restart_required as "restartRequired", 
-                avatar_url as "avatarUrl"
-            FROM hacs_extensions WHERE id = $1
-        `;
-        const result = await this.pool.query(query, [id]);
-        return result.rows[0] as HacsExtension || null;
+    private async getIntegration(id: string): Promise<HacsExtensionEntity | null> {
+        return this.hacsRepository.findOne({ where: { id } });
     }
 
-    private async saveIntegration(integration: HacsExtension): Promise<void> {
-        const query = `
-            INSERT INTO hacs_extensions (
-                id, name, description, type, github_repo, 
-                stars, downloads, last_activity, 
-                version, installed_version, 
-                status, restart_required, avatar_url, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                description = EXCLUDED.description,
-                type = EXCLUDED.type,
-                github_repo = EXCLUDED.github_repo,
-                stars = EXCLUDED.stars,
-                downloads = EXCLUDED.downloads,
-                last_activity = EXCLUDED.last_activity,
-                version = EXCLUDED.version,
-                installed_version = EXCLUDED.installed_version,
-                status = EXCLUDED.status,
-                restart_required = EXCLUDED.restart_required,
-                avatar_url = EXCLUDED.avatar_url,
-                updated_at = CURRENT_TIMESTAMP
-        `;
-        const values = [
-            integration.id, integration.name, integration.description, integration.type, integration.githubRepo,
-            integration.stars, integration.downloads, integration.lastActivity,
-            integration.version, integration.installedVersion,
-            integration.status, integration.restartRequired, integration.avatarUrl
-        ];
-        await this.pool.query(query, values);
+    private async saveIntegration(integration: Partial<HacsExtensionEntity> & { id: string }): Promise<void> {
+        await this.hacsRepository.save(integration);
     }
 
     private async deleteIntegration(id: string): Promise<void> {
-        await this.pool.query('DELETE FROM hacs_extensions WHERE id = $1', [id]);
+        await this.hacsRepository.delete(id);
     }
 
     /**
@@ -122,16 +58,11 @@ export class HacsService implements OnModuleInit {
      */
     private mapCatalogType(catalogType: string): ExtensionType {
         switch (catalogType.toLowerCase()) {
-            case "integration":
-                return "integration";
-            case "plugin":
-                return "frontend";
-            case "theme":
-                return "theme";
-            case "dashboard":
-                return "panel";
-            default:
-                return "integration";
+            case "integration": return "integration";
+            case "plugin": return "frontend";
+            case "theme": return "theme";
+            case "dashboard": return "panel";
+            default: return "integration";
         }
     }
 
@@ -171,12 +102,10 @@ export class HacsService implements OnModuleInit {
         const id = catalogEntry.id;
         const githubRepo = catalogEntry.fullName;
 
-        // Format last activity
         const lastActivity = githubMetadata?.pushed_at
             ? this.formatActivityDate(githubMetadata.pushed_at)
             : "Unknown";
 
-        // Estimate downloads from stars (fast, non-blocking)
         const stars = githubMetadata?.stargazers_count || 0;
         const downloads = Math.floor(stars * 10); // Rough estimate
 
@@ -189,7 +118,7 @@ export class HacsService implements OnModuleInit {
             stars,
             downloads,
             lastActivity,
-            version: "latest", // Version would come from releases API
+            version: "latest",
             installedVersion: installedVersion || null,
             status,
             restartRequired: false,
@@ -211,7 +140,6 @@ export class HacsService implements OnModuleInit {
         perPage: number;
         totalPages: number;
     }> {
-        // Get catalog entries (filtered by search if provided)
         let catalogEntries: HACSCatalogEntry[];
         if (searchQuery?.trim()) {
             const allEntries = await getAllCatalogEntries();
@@ -232,20 +160,17 @@ export class HacsService implements OnModuleInit {
         const end = start + perPage;
         const paginatedEntries = catalogEntries.slice(start, end);
 
-        // Enrich with GitHub metadata
         const enrichedExtensions = await Promise.all(
             paginatedEntries.map(async (entry) => {
                 try {
                     const githubMetadata = await fetchGitHubMetadata(entry.fullName);
-                    if (!githubMetadata) {
-                        return null;
-                    }
+                    if (!githubMetadata) return null;
                     const existing = await this.getIntegration(entry.id);
                     return this.enrichCatalogEntry(
                         entry,
                         githubMetadata,
                         existing?.installedVersion,
-                        existing?.status || "not_installed"
+                        existing?.status as any || "not_installed"
                     );
                 } catch (error) {
                     this.logger.error(`Error enriching ${entry.fullName}: ${error}`);
@@ -258,13 +183,7 @@ export class HacsService implements OnModuleInit {
             (ext): ext is HacsExtension => ext !== null
         );
 
-        return {
-            extensions,
-            total,
-            page,
-            perPage,
-            totalPages,
-        };
+        return { extensions, total, page, perPage, totalPages };
     }
 
     /**
@@ -274,21 +193,17 @@ export class HacsService implements OnModuleInit {
         const allEntries = await getAllCatalogEntries();
         const entry = allEntries.find((e) => e.id === id);
 
-        if (!entry) {
-            return null;
-        }
+        if (!entry) return null;
 
         try {
             const githubMetadata = await fetchGitHubMetadata(entry.fullName);
-            if (!githubMetadata) {
-                return null;
-            }
+            if (!githubMetadata) return null;
             const existing = await this.getIntegration(id);
             return this.enrichCatalogEntry(
                 entry,
                 githubMetadata,
                 existing?.installedVersion,
-                existing?.status || "not_installed"
+                existing?.status as any || "not_installed"
             );
         } catch (error) {
             this.logger.error(`Error fetching extension ${id}: ${error}`);
@@ -320,7 +235,7 @@ export class HacsService implements OnModuleInit {
         if (!extension) {
             return {
                 success: false,
-                extension: extension as any,
+                extension: null as any,
                 message: "Extension not found in catalog",
                 restartRequired: false,
             };
@@ -330,7 +245,7 @@ export class HacsService implements OnModuleInit {
         if (existing && existing.status === "installed") {
             return {
                 success: false,
-                extension: existing,
+                extension: existing as any,
                 message: "Extension is already installed",
                 restartRequired: false,
             };
@@ -339,16 +254,22 @@ export class HacsService implements OnModuleInit {
         const agentCommand = this.createAgentCommand("HACS_INSTALL", extensionId, "queued");
 
         // Mark as installing in DB
-        const installingExtension: HacsExtension = {
-            ...extension,
+        await this.saveIntegration({
+            id: extensionId,
+            name: extension.name,
+            description: extension.description,
+            type: extension.type,
+            githubRepo: extension.githubRepo,
+            stars: extension.stars,
+            downloads: extension.downloads,
+            lastActivity: extension.lastActivity,
+            version: extension.version,
             status: "installing",
-            installedVersion: null,
             restartRequired: false,
-        };
-        await this.saveIntegration(installingExtension);
+            avatarUrl: extension.avatarUrl,
+        });
 
         try {
-            // Real clone logic
             const extensionsDir = path.join(process.cwd(), 'extensions');
             if (!fs.existsSync(extensionsDir)) {
                 fs.mkdirSync(extensionsDir);
@@ -356,7 +277,6 @@ export class HacsService implements OnModuleInit {
 
             const targetDir = path.join(extensionsDir, extension.name.replace(/\s+/g, '_').toLowerCase());
 
-            // Clean up if exists (shouldn't happen if not installed, but safe)
             if (fs.existsSync(targetDir)) {
                 await fs.promises.rm(targetDir, { recursive: true, force: true });
             }
@@ -365,18 +285,16 @@ export class HacsService implements OnModuleInit {
             const git = simpleGit();
             await git.clone(`https://github.com/${extension.githubRepo}.git`, targetDir);
 
-            const installedExtension: HacsExtension = {
-                ...extension,
+            await this.saveIntegration({
+                id: extensionId,
                 status: "installed",
                 installedVersion: extension.version,
                 restartRequired: true,
-            };
-            await this.saveIntegration(installedExtension);
+            });
 
             agentCommand.status = "completed";
             agentCommand.completedAt = new Date().toISOString();
 
-            // Create success notification
             try {
                 await this.notificationsService.createNotification({
                     userId: null,
@@ -390,34 +308,32 @@ export class HacsService implements OnModuleInit {
                 this.logger.warn(`Failed to create notification: ${notifError}`);
             }
 
+            const updated = await this.getIntegration(extensionId);
             return {
                 success: true,
-                extension: installedExtension,
+                extension: updated as any,
                 message: "Extension installed successfully",
                 restartRequired: true,
                 agentCommand,
             };
-        } catch (error) {
+        } catch (error: any) {
             this.logger.error(`Failed to clone extension: ${error}`);
 
-            // Revert status
-            const failedExtension: HacsExtension = {
-                ...extension,
+            await this.saveIntegration({
+                id: extensionId,
                 status: "not_installed",
                 installedVersion: null,
                 restartRequired: false,
-            };
-            await this.saveIntegration(failedExtension);
+            });
 
             agentCommand.status = "failed";
 
-            // Create error notification
             try {
                 await this.notificationsService.createNotification({
                     userId: null,
                     type: 'error',
                     title: 'Integration Download Failed',
-                    message: `Failed to download ${extension.name}: ${error instanceof Error ? error.message : String(error)}`,
+                    message: `Failed to download ${extension.name}: ${error.message || String(error)}`,
                     actionUrl: '/hacs',
                     actionLabel: 'View HACS',
                 });
@@ -425,10 +341,11 @@ export class HacsService implements OnModuleInit {
                 this.logger.warn(`Failed to create notification: ${notifError}`);
             }
 
+            const updated = await this.getIntegration(extensionId);
             return {
                 success: false,
-                extension: failedExtension,
-                message: `Installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                extension: updated as any,
+                message: `Installation failed: ${error.message || String(error)}`,
                 restartRequired: false,
                 agentCommand
             };
@@ -443,7 +360,7 @@ export class HacsService implements OnModuleInit {
         if (!existing || existing.status !== "installed") {
             return {
                 success: false,
-                extension: existing || ({} as HacsExtension),
+                extension: existing as any || {} as HacsExtension,
                 message: "Extension is not installed",
                 restartRequired: false,
             };
@@ -453,7 +370,7 @@ export class HacsService implements OnModuleInit {
         if (!latest) {
             return {
                 success: false,
-                extension: existing,
+                extension: existing as any,
                 message: "Extension not found in catalog",
                 restartRequired: false,
             };
@@ -463,20 +380,20 @@ export class HacsService implements OnModuleInit {
 
         await new Promise((resolve) => setTimeout(resolve, 1500 + Math.random() * 1000));
 
-        const updatedExtension: HacsExtension = {
-            ...latest,
+        await this.saveIntegration({
+            id: extensionId,
             status: "installed",
             installedVersion: latest.version,
             restartRequired: true,
-        };
-        await this.saveIntegration(updatedExtension);
+        });
 
         agentCommand.status = "completed";
         agentCommand.completedAt = new Date().toISOString();
 
+        const updated = await this.getIntegration(extensionId);
         return {
             success: true,
-            extension: updatedExtension,
+            extension: updated as any,
             message: "Extension updated successfully",
             restartRequired: true,
             agentCommand,
@@ -501,29 +418,29 @@ export class HacsService implements OnModuleInit {
             if (!githubMetadata) {
                 return {
                     success: false,
-                    extension: existing,
+                    extension: existing as any,
                     message: "Failed to fetch GitHub metadata",
                 };
             }
 
-            const refreshedExtension: HacsExtension = {
-                ...existing,
+            await this.saveIntegration({
+                id: extensionId,
                 stars: githubMetadata.stargazers_count,
                 lastActivity: this.formatActivityDate(githubMetadata.pushed_at),
                 avatarUrl: githubMetadata.owner?.avatar_url || existing.avatarUrl,
-            };
-            await this.saveIntegration(refreshedExtension);
+            });
 
+            const updated = await this.getIntegration(extensionId);
             return {
                 success: true,
-                extension: refreshedExtension,
+                extension: updated as any,
                 message: "Extension metadata refreshed",
             };
         } catch (error) {
             this.logger.error(`Error refreshing extension ${extensionId}: ${error}`);
             return {
                 success: false,
-                extension: existing,
+                extension: existing as any,
                 message: "Error refreshing extension metadata",
             };
         }
@@ -533,12 +450,11 @@ export class HacsService implements OnModuleInit {
      * Get extension details (with README)
      */
     async getExtensionDetails(extensionId: string): Promise<HacsExtensionDetails | null> {
-        const extension = (await this.getIntegration(extensionId)) || (await this.getExtensionById(extensionId));
-        if (!extension) {
-            return null;
-        }
+        const extensionEntity = (await this.getIntegration(extensionId)) || (await this.getExtensionById(extensionId));
+        if (!extensionEntity) return null;
 
-        // Fetch README from GitHub (simplified)
+        const extension = extensionEntity as any as HacsExtension;
+
         const readme = `# ${extension.name}\n\n${extension.description}\n\n## Installation\n\nInstall via HACS.`;
 
         return {
@@ -576,8 +492,8 @@ export class HacsService implements OnModuleInit {
 
             this.logger.log(`Found ${components.length} components on Real HA`);
             return components;
-        } catch (error) {
-            this.logger.error(`Failed to query Real HA: ${error instanceof Error ? error.message : String(error)}`);
+        } catch (error: any) {
+            this.logger.error(`Failed to query Real HA: ${error.message || String(error)}`);
             return [];
         }
     }

@@ -1,6 +1,8 @@
 
 import { Controller, Get, Post, Body, Put, Param, Delete, Patch } from '@nestjs/common';
-import { DashboardsService, Dashboard, DashboardCard } from './dashboards.service';
+import { DashboardsService } from './dashboards.service';
+import { Dashboard } from './entities/dashboard.entity';
+import { DashboardCard } from './entities/dashboard-card.entity';
 
 @Controller('dashboards')
 export class DashboardsController {

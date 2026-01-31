@@ -1,12 +1,13 @@
-
-import { Injectable, Inject } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { EntityState } from '../../devices/entities/entity-state.entity';
 
 export interface EntityFilters {
     domain?: string;
     deviceId?: string;
     state?: string;
-    source?: 'ha' | 'internal' | 'hybrid';
+    source?: 'ha' | 'internal' | 'hybrid' | string;
     limit?: number;
     offset?: number;
 }
@@ -20,143 +21,91 @@ export interface EntityStats {
 
 @Injectable()
 export class StateInspectionService {
-    constructor(@Inject('DATABASE_POOL') private pool: Pool) { }
+    constructor(
+        @InjectRepository(EntityState)
+        private readonly entityRepository: Repository<EntityState>
+    ) { }
 
     async getEntities(filters: EntityFilters) {
-        let sql = `
-      SELECT 
-        id,
-        device_id as "deviceId",
-        entity_id as "entityId",
-        domain,
-        name,
-        icon,
-        state,
-        attributes,
-        last_changed as "lastChanged",
-        last_updated as "lastUpdated",
-        created_at as "createdAt",
-        ha_entity_id as "haEntityId",
-        source
-      FROM entities
-      WHERE 1=1
-    `;
-
-        const params: any[] = [];
-        let paramIndex = 1;
+        const qb = this.entityRepository.createQueryBuilder('e');
 
         if (filters.domain) {
-            sql += ` AND domain = $${paramIndex}`;
-            params.push(filters.domain);
-            paramIndex++;
+            qb.andWhere('e.domain = :domain', { domain: filters.domain });
         }
 
         if (filters.deviceId) {
-            sql += ` AND device_id = $${paramIndex}`;
-            params.push(filters.deviceId);
-            paramIndex++;
+            qb.andWhere('e.device_id = :deviceId', { deviceId: filters.deviceId });
         }
 
         if (filters.state) {
-            sql += ` AND state = $${paramIndex}`;
-            params.push(filters.state);
-            paramIndex++;
+            qb.andWhere('e.state = :state', { state: filters.state });
         }
 
         if (filters.source) {
-            sql += ` AND source = $${paramIndex}`;
-            params.push(filters.source);
-            paramIndex++;
+            qb.andWhere('e.source = :source', { source: filters.source });
         }
 
-        const countSql = `SELECT COUNT(*) as count FROM (${sql}) as filtered`;
-        const countResult = await this.pool.query(countSql, params);
-        const total = parseInt(countResult.rows[0]?.count || '0', 10);
+        const total = await qb.getCount();
 
         const limit = filters.limit || 100;
         const offset = filters.offset || 0;
-        sql += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        params.push(limit, offset);
 
-        const result = await this.pool.query(sql, params);
+        qb.orderBy('e.created_at', 'DESC')
+            .limit(limit)
+            .offset(offset);
 
-        const entities = result.rows.map(row => ({
-            ...row,
-            attributes: typeof row.attributes === 'string' ? JSON.parse(row.attributes) : (row.attributes || {}),
-            source: (row.source || 'internal') as 'ha' | 'internal' | 'hybrid'
-        }));
+        const entities = await qb.getMany();
 
         return { entities, total };
     }
 
     async getEntity(entityId: string) {
-        const sql = `
-          SELECT 
-            id,
-            device_id as "deviceId",
-            entity_id as "entityId",
-            domain,
-            name,
-            icon,
-            state,
-            attributes,
-            last_changed as "lastChanged",
-            last_updated as "lastUpdated",
-            created_at as "createdAt",
-            ha_entity_id as "haEntityId",
-            source
-          FROM entities
-          WHERE entity_id = $1
-        `;
-        const result = await this.pool.query(sql, [entityId]);
-        if (result.rows.length === 0) return null;
-
-        const row = result.rows[0];
-        return {
-            ...row,
-            attributes: typeof row.attributes === 'string' ? JSON.parse(row.attributes) : (row.attributes || {}),
-            source: (row.source || 'internal') as 'ha' | 'internal' | 'hybrid'
-        };
+        return this.entityRepository.findOne({
+            where: { entityId }
+        });
     }
 
     async getEntityStats(): Promise<EntityStats> {
-        const totalResult = await this.pool.query('SELECT COUNT(*) as count FROM entities');
-        const total = parseInt(totalResult.rows[0]?.count || '0', 10);
+        const total = await this.entityRepository.count();
 
         // Get counts by domain
-        const domainResult = await this.pool.query(
-            `SELECT domain, COUNT(*) as count 
-       FROM entities 
-       GROUP BY domain 
-       ORDER BY count DESC`
-        );
+        const domainCounts = await this.entityRepository
+            .createQueryBuilder('e')
+            .select('e.domain', 'domain')
+            .addSelect('COUNT(*)', 'count')
+            .groupBy('e.domain')
+            .getRawMany();
+
         const byDomain: Record<string, number> = {};
-        domainResult.rows.forEach(row => {
+        domainCounts.forEach(row => {
             byDomain[row.domain] = parseInt(row.count, 10);
         });
 
         // Get counts by source
-        const sourceResult = await this.pool.query(
-            `SELECT source, COUNT(*) as count 
-       FROM entities 
-       GROUP BY source 
-       ORDER BY count DESC`
-        );
+        const sourceCounts = await this.entityRepository
+            .createQueryBuilder('e')
+            .select('e.source', 'source')
+            .addSelect('COUNT(*)', 'count')
+            .groupBy('e.source')
+            .getRawMany();
+
         const bySource: Record<string, number> = {};
-        sourceResult.rows.forEach(row => {
+        sourceCounts.forEach(row => {
             bySource[row.source || 'internal'] = parseInt(row.count, 10);
         });
 
         // Get counts by state
-        const stateResult = await this.pool.query(
-            `SELECT state, COUNT(*) as count 
-       FROM entities 
-       GROUP BY state 
-       ORDER BY count DESC 
-       LIMIT 20`
-        );
+        const stateCounts = await this.entityRepository
+            .createQueryBuilder('e')
+            .select('e.state', 'state')
+            .addSelect('COUNT(*)', 'count')
+            .groupBy('e.state')
+            .orderBy('count', 'DESC')
+            .limit(20)
+            .getRawMany();
+
         const byState: Record<string, number> = {};
-        stateResult.rows.forEach(row => {
+        stateCounts.forEach(row => {
             byState[row.state] = parseInt(row.count, 10);
         });
 

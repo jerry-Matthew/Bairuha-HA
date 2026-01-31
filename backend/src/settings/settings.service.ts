@@ -1,22 +1,23 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { Pool } from 'pg';
-import { DATABASE_POOL } from '../database/database.module';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { SystemSetting } from './entities/system-setting.entity';
 
 @Injectable()
 export class SettingsService {
-    constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) { }
+    constructor(
+        @InjectRepository(SystemSetting)
+        private readonly settingsRepository: Repository<SystemSetting>,
+    ) { }
 
     async getSetting<T>(key: string): Promise<T | null> {
-        const result = await this.pool.query(
-            'SELECT value FROM system_settings WHERE key = $1',
-            [key],
-        );
+        const setting = await this.settingsRepository.findOne({ where: { key } });
 
-        if (result.rows.length > 0) {
+        if (setting) {
             try {
-                return JSON.parse(result.rows[0].value) as T;
+                return JSON.parse(setting.value) as T;
             } catch (e) {
-                return result.rows[0].value as T;
+                return setting.value as any as T;
             }
         }
         return null;
@@ -25,20 +26,17 @@ export class SettingsService {
     async saveSetting(key: string, value: any): Promise<void> {
         const stringValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
 
-        await this.pool.query(
-            `INSERT INTO system_settings (key, value, updated_at)
-       VALUES ($1, $2, CURRENT_TIMESTAMP)
-       ON CONFLICT (key) DO UPDATE 
-       SET value = $2, updated_at = CURRENT_TIMESTAMP`,
-            [key, stringValue],
-        );
+        await this.settingsRepository.save({
+            key,
+            value: stringValue,
+        });
     }
 
     async getAllSettings(): Promise<Record<string, any>> {
-        const result = await this.pool.query('SELECT key, value FROM system_settings');
+        const results = await this.settingsRepository.find();
         const settings: Record<string, any> = {};
 
-        for (const row of result.rows) {
+        for (const row of results) {
             try {
                 settings[row.key] = JSON.parse(row.value);
             } catch {

@@ -24,4 +24,8 @@ export class SignupDto {
     @IsString()
     @IsOptional()
     name?: string;
+
+    @IsString()
+    @IsOptional()
+    confirmPassword?: string;
 }

@@ -3,7 +3,7 @@ import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from '../users/users.service';
-import { User } from '../users/user.entity';
+import { User } from '../users/entities/user.entity';
 
 @Injectable()
 export class AuthService {
@@ -14,9 +14,9 @@ export class AuthService {
 
     async validateUser(email: string, pass: string): Promise<any> {
         const user = await this.usersService.findOneByEmail(email);
-        if (user && (await bcrypt.compare(pass, user.password_hash))) {
+        if (user && (await bcrypt.compare(pass, user.passwordHash))) {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { password_hash, ...result } = user;
+            const { passwordHash, ...result } = user;
             return result;
         }
         return null;
@@ -46,7 +46,7 @@ export class AuthService {
             if (!user) throw new UnauthorizedException('User not found');
 
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { password_hash, ...result } = user;
+            const { passwordHash, ...result } = user;
             return this.login(result);
         } catch (e) {
             throw new UnauthorizedException('Invalid refresh token');
@@ -63,7 +63,7 @@ export class AuthService {
         const newUser = await this.usersService.create(email, hashedPassword, name);
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { password_hash, ...result } = newUser;
+        const { passwordHash, ...result } = newUser;
         return this.login(result);
     }
 }

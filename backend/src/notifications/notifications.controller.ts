@@ -41,7 +41,7 @@ export class NotificationsController {
 
         const options = {
             read: read !== undefined ? read === 'true' : undefined,
-            type,
+            type: type as any,
             limit: limit ? parseInt(limit) : 50,
             offset: offset ? parseInt(offset) : 0,
         };
